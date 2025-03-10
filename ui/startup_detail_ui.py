@@ -21,12 +21,12 @@ def render_startup_detail():
         # Bouton pour revenir aux résultats
         if st.button("Voir tous les résultats"):
             st.session_state.current_view = "results"
-            st.experimental_rerun()
+            st.rerun()
 
         # Bouton pour revenir au chat
         if st.button("Retour au chat"):
             st.session_state.current_view = "chat"
-            st.experimental_rerun()
+            st.rerun()
 
         return
 
@@ -39,12 +39,12 @@ def render_startup_detail():
     with col1:
         if st.button("⬅️ Retour aux résultats"):
             st.session_state.current_view = "results"
-            st.experimental_rerun()
+            st.rerun()
 
     with col2:
         if st.button("💬 Retour au chat"):
             st.session_state.current_view = "chat"
-            st.experimental_rerun()
+            st.rerun()
 
     # Affichage des détails de la startup avec le style French Tech
     with st.container():
@@ -120,7 +120,7 @@ def render_startup_detail():
 
                 st.session_state.messages.append({"role": "user", "content": new_message})
                 st.session_state.current_view = "chat"
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.warning("Veuillez entrer une question avant d'envoyer.")
 
@@ -145,4 +145,4 @@ def render_startup_detail():
 
                 st.session_state.messages.append({"role": "user", "content": suggestion})
                 st.session_state.current_view = "chat"
-                st.experimental_rerun()
+                st.rerun()

@@ -1,6 +1,5 @@
 """
-Implémentation d'un crawler web simple
-Remplace la dépendance à firecrawl qui n'existe pas
+Implémentation d'un crawler web robuste pour La French Tech Réunion
 """
 import logging
 import requests
@@ -9,6 +8,7 @@ import re
 from typing import Dict, List, Any, Optional
 import time
 import random
+import urllib.parse
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 
 class Crawler:
     """
-    Crawler web simple
+    Crawler web robuste pour le site de La French Tech Réunion
     """
 
-    def __init__(self, base_url: str, selectors: Dict[str, str], max_pages: int = 10):
+    def __init__(self, base_url: str, selectors: Dict[str, str], max_pages: int = 10, delay_range: tuple = (1.0, 3.0)):
         """
         Initialisation du crawler
 
@@ -28,32 +28,59 @@ class Crawler:
             base_url: URL de base à crawler
             selectors: Sélecteurs CSS pour extraire les données
             max_pages: Nombre maximum de pages à crawler
+            delay_range: Plage de délai entre les requêtes (min, max) en secondes
         """
         self.base_url = base_url
         self.selectors = selectors
         self.max_pages = max_pages
+        self.delay_range = delay_range
         self.session = requests.Session()
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "fr,fr-FR;q=0.8,en-US;q=0.5,en;q=0.3",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Cache-Control": "max-age=0"
         }
 
-    def get_page(self, url: str) -> Optional[BeautifulSoup]:
+    def get_page(self, url: str, retry_count: int = 3) -> Optional[BeautifulSoup]:
         """
-        Récupère le contenu d'une page web
+        Récupère le contenu d'une page web avec système de retry
 
         Args:
             url: URL de la page
+            retry_count: Nombre de tentatives en cas d'échec
 
         Returns:
             Objet BeautifulSoup ou None en cas d'erreur
         """
-        try:
-            response = self.session.get(url, headers=self.headers, timeout=10)
-            response.raise_for_status()
-            return BeautifulSoup(response.text, "html.parser")
-        except requests.RequestException as e:
-            logger.error(f"Erreur lors de la récupération de la page {url}: {e}")
-            return None
+        for attempt in range(retry_count):
+            try:
+                logger.info(f"Tentative de récupération de la page {url} (tentative {attempt + 1}/{retry_count})")
+                response = self.session.get(url, headers=self.headers, timeout=15)
+                response.raise_for_status()
+
+                # Vérification que le contenu est bien du HTML
+                content_type = response.headers.get('Content-Type', '').lower()
+                if 'text/html' not in content_type:
+                    logger.warning(f"Le contenu n'est pas du HTML: {content_type}")
+                    return None
+
+                return BeautifulSoup(response.text, "html.parser")
+
+            except requests.RequestException as e:
+                logger.error(f"Erreur lors de la tentative {attempt + 1}: {e}")
+                if attempt < retry_count - 1:
+                    # Attente exponentielle entre les tentatives
+                    wait_time = 2 ** attempt + random.uniform(0, 1)
+                    logger.info(f"Nouvelle tentative dans {wait_time:.2f} secondes...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Échec après {retry_count} tentatives pour {url}")
+                    return None
+
+        return None
 
     def extract_startup_data(self, element: BeautifulSoup) -> Dict[str, Any]:
         """
@@ -77,17 +104,39 @@ class Crawler:
             if selected:
                 if key == "startup_name":
                     data["name"] = selected[0].get_text(strip=True)
+
                 elif key == "startup_description":
                     data["description"] = selected[0].get_text(strip=True)
+
                 elif key == "startup_url":
-                    data["url"] = selected[0].get("href", "")
+                    url = selected[0].get("href", "")
+                    # Vérification si l'URL est relative et conversion en URL absolue si nécessaire
+                    if url and not url.startswith(('http://', 'https://')):
+                        url = urllib.parse.urljoin(self.base_url, url)
+                    data["url"] = url
+
                 elif key == "startup_contact":
-                    data["contact"] = selected[0].get_text(strip=True)
+                    contact_text = selected[0].get_text(strip=True)
+                    # Extraction d'email si présent
+                    email_match = re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', contact_text)
+                    if email_match:
+                        data["contact"] = email_match.group(0)
+                    else:
+                        data["contact"] = contact_text
+
                 elif key == "startup_tags":
                     # Extraction des tags
                     tags_text = selected[0].get_text(strip=True)
                     tags = [tag.strip() for tag in tags_text.split(",")]
+                    # Nettoyage des tags vides
+                    tags = [tag for tag in tags if tag]
                     data["tags"] = tags
+
+                elif key == "startup_domain":
+                    data["domain"] = selected[0].get_text(strip=True)
+
+                elif key == "startup_location":
+                    data["location"] = selected[0].get_text(strip=True)
 
         # Génération d'un ID unique basé sur le nom
         if "name" in data:
@@ -100,9 +149,14 @@ class Crawler:
             # Utiliser le premier tag comme domaine par défaut
             data["domain"] = data["tags"][0]
 
-        # Localisation par défaut
+        # Localisation par défaut si non spécifiée
         if "location" not in data:
             data["location"] = "La Réunion"
+
+        # Normalisation des données
+        for key in ["name", "description", "url", "contact", "domain", "location"]:
+            if key in data and isinstance(data[key], str):
+                data[key] = data[key].strip()
 
         return data
 
@@ -133,34 +187,56 @@ class Crawler:
             # Extraction des données pour chaque startup
             for card in startup_cards:
                 startup_data = self.extract_startup_data(card)
-                if startup_data:
+                if startup_data and "name" in startup_data:  # Vérification que les données essentielles sont présentes
                     startups_data.append(startup_data)
+                    logger.info(f"Startup extraite: {startup_data.get('name', 'Sans nom')}")
 
-            # Recherche de la page suivante
-            next_page = soup.select_one("a.next-page, a.pagination-next")
+            # Recherche de la page suivante avec gestion des différents formats de pagination
+            next_page = None
+
+            # Différents types de sélecteurs de pagination à essayer
+            pagination_selectors = [
+                "a.next-page",
+                "a.pagination-next",
+                ".pagination a[aria-label='Next']",
+                ".nav-links a.next",
+                ".pagination-next a",
+                ".pagination a:contains('Suivant')",
+                "a:contains('Suivant')",
+                "a[rel='next']"
+            ]
+
+            for selector in pagination_selectors:
+                next_page = soup.select_one(selector)
+                if next_page and "href" in next_page.attrs:
+                    break
+
             if next_page and "href" in next_page.attrs:
                 # Construction de l'URL complète si nécessaire
                 next_url = next_page["href"]
-                if not next_url.startswith("http"):
-                    from urllib.parse import urljoin
-                    next_url = urljoin(current_url, next_url)
+                if not next_url.startswith(("http://", "https://")):
+                    next_url = urllib.parse.urljoin(current_url, next_url)
 
                 current_url = next_url
             else:
+                # Aucun lien "suivant" trouvé
+                logger.info("Aucun lien vers une page suivante trouvé. Fin du crawling.")
                 current_url = None
 
             pages_crawled += 1
 
             # Pause pour éviter de surcharger le serveur
             if current_url:
-                time.sleep(random.uniform(1.0, 3.0))
+                delay = random.uniform(self.delay_range[0], self.delay_range[1])
+                logger.info(f"Pause de {delay:.2f} secondes avant la prochaine page...")
+                time.sleep(delay)
 
         logger.info(f"Crawling terminé. {len(startups_data)} startups trouvées au total.")
         return startups_data
 
     def get_sample_data(self) -> List[Dict[str, Any]]:
         """
-        Génère des données d'exemple pour les startups
+        Génère des données d'exemple pour les startups (comme fallback)
 
         Returns:
             Liste des données d'exemple

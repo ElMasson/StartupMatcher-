@@ -29,3 +29,7 @@ tqdm
 # Authentification
 pyjwt
 passlib
+
+schedule
+beautifulsoup4
+requests

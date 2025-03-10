@@ -9,9 +9,11 @@ from ui.chat_ui import render_chat_interface
 from ui.results_ui import render_results
 from ui.startup_detail_ui import render_startup_detail
 from ui.profile_ui import render_profile_page
+from ui.admin_crawler_ui import render_crawler_admin
 from ui.custom_style import apply_french_tech_style, display_french_tech_header, display_french_tech_footer
 from auth.auth_handler import AuthHandler
 from auth.auth_ui import render_login_page, render_user_menu
+from crawler.startup_crawler import start_background_updates
 
 
 def main():
@@ -41,6 +43,13 @@ def main():
         st.error("⚠️ La clé API Mistral n'est pas configurée. Veuillez ajouter MISTRAL_API_KEY dans le fichier .env")
         st.stop()
 
+    # Démarrage des mises à jour périodiques en arrière-plan
+    try:
+        start_background_updates()
+    except Exception as e:
+        st.error(f"Erreur lors du démarrage des mises à jour en arrière-plan: {e}")
+        st.info("L'application continuera à fonctionner, mais les mises à jour automatiques ne seront pas disponibles.")
+
     # Initialisation de la session state
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -51,8 +60,23 @@ def main():
     if "current_view" not in st.session_state:
         st.session_state.current_view = "chat"
 
+    # Vérification de l'authentification pour l'accès à l'administration
+    is_admin = False
+    user = AuthHandler.get_current_user()
+    if user:
+        # Considérer comme administrateur certains utilisateurs (à ajuster selon vos besoins)
+        admin_emails = [
+            "admin@frenchtech-reunion.com",
+            "contact@frenchtech-reunion.com"
+        ]
+        is_admin = user.get("email", "") in admin_emails
+
     # Navigation stylisée
-    tabs = ["Chat", "Résultats", "Détails"]
+    tabs = ["Chat", "Résultats", "Détails", "Profil"]
+
+    # Ajout de l'onglet Admin pour les administrateurs
+    if is_admin:
+        tabs.append("Admin")
 
     css_tab = f"""
     <style>
@@ -65,8 +89,24 @@ def main():
     """
     st.markdown(css_tab, unsafe_allow_html=True)
 
+    # Recherche de l'index courant
+    tab_view_map = {
+        "chat": "Chat",
+        "results": "Résultats",
+        "details": "Détails",
+        "profile": "Profil",
+        "admin": "Admin"
+    }
+    current_tab = tab_view_map.get(st.session_state.current_view, "Chat")
+
+    # Si l'utilisateur n'est pas admin et que la vue est admin, rediriger vers chat
+    if current_tab == "Admin" and not is_admin:
+        current_tab = "Chat"
+        st.session_state.current_view = "chat"
+
+    current_tab_index = tabs.index(current_tab) if current_tab in tabs else 0
+
     tab_cols = st.columns(len(tabs))
-    current_tab_index = tabs.index(st.session_state.current_view.capitalize())
 
     for i, (col, tab) in enumerate(zip(tab_cols, tabs)):
         with col:
@@ -81,18 +121,26 @@ def main():
             else:
                 # Tab non sélectionné
                 if st.button(tab, key=f"tab_{tab.lower()}"):
-                    st.session_state.current_view = tab.lower()
-                    st.experimental_rerun()
+                    # Convertir le nom de l'onglet en nom de vue
+                    view_name = tab.lower()
+                    st.session_state.current_view = view_name
+                    st.rerun()
 
-        # Affichage de la vue correspondante
-        if st.session_state.current_view == "chat":
-            render_chat_interface()
-        elif st.session_state.current_view == "results":
-            render_results()
-        elif st.session_state.current_view == "details":
-            render_startup_detail()
-        elif st.session_state.current_view == "profile":
-            render_profile_page()
+    # Affichage de la vue correspondante
+    if st.session_state.current_view == "chat":
+        render_chat_interface()
+    elif st.session_state.current_view == "results":
+        render_results()
+    elif st.session_state.current_view == "details":
+        render_startup_detail()
+    elif st.session_state.current_view == "profile":
+        render_profile_page()
+    elif st.session_state.current_view == "admin" and is_admin:
+        render_crawler_admin()
+    else:
+        # Redirection par défaut vers le chat
+        st.session_state.current_view = "chat"
+        st.rerun()
 
 
 if __name__ == "__main__":

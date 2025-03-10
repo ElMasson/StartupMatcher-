@@ -9,6 +9,15 @@ import random
 import json
 import time
 
+# Import pour le système de crawling (ajout sans modifier le reste de l'app)
+try:
+    from crawler.startup_crawler import get_startup_data, start_background_updates
+    from ui.startup_admin_ui import render_startup_admin, load_startups
+    CRAWLER_AVAILABLE = True
+except ImportError as e:
+    print(f"Avertissement: Module de crawling non disponible - {e}")
+    CRAWLER_AVAILABLE = False
+
 # Chargement des variables d'environnement
 load_dotenv()
 
@@ -148,9 +157,44 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# Démarrage du système de crawling en arrière-plan (si disponible)
+if CRAWLER_AVAILABLE:
+    try:
+        start_background_updates()
+        if not st.session_state.get("crawler_started", False):
+            st.session_state.crawler_started = True
+            print("Système de mise à jour en arrière-plan démarré")
+    except Exception as e:
+        print(f"Erreur lors du démarrage du système de crawling: {e}")
+
 
 # Données d'exemple pour les startups
+# Partie pour get_sample_startups
 def get_sample_startups():
+    # D'abord essayer d'obtenir les startups manuelles
+    try:
+        # Vérifier si le fichier startups_manual.json existe
+        manual_file = "data/startups_manual.json"
+        if os.path.exists(manual_file):
+            with open(manual_file, 'r', encoding='utf-8') as f:
+                manual_startups = json.load(f)
+                if manual_startups:
+                    print(f"Utilisation de {len(manual_startups)} startups depuis le fichier manuel")
+                    return manual_startups
+    except Exception as e:
+        print(f"Erreur lors du chargement des startups manuelles: {e}")
+
+    # Si le crawler est disponible, on l'utilise en priorité
+    if CRAWLER_AVAILABLE:
+        try:
+            # Ensuite essayer avec le crawler
+            startups = get_startup_data()
+            if startups:
+                return startups
+        except Exception as e:
+            print(f"Erreur lors de la récupération des données via le crawler: {e}")
+            # On continue avec les données d'exemple en cas d'erreur
+
     return [
         {
             "id": "startup-12345",
@@ -256,8 +300,18 @@ def get_sample_startups():
 
 
 # Fonction simplifiée pour trouver des startups correspondant à une requête
+# Partie pour find_matching_startups
 def find_matching_startups(query, all_startups, top_k=5):
-    # Recherche simple par mots-clés
+    # Utiliser notre crawler amélioré et le système RAG si disponible
+    if CRAWLER_AVAILABLE:
+        try:
+            from rag.retrieval import retrieve_startups_by_need
+            return retrieve_startups_by_need(query, top_k=top_k)
+        except Exception as e:
+            print(f"Erreur lors de la recherche avec le système RAG: {e}")
+            # Continuer avec la méthode simplifiée en cas d'erreur
+
+    # Recherche simple par mots-clés (méthode originale)
     keywords = query.lower().split()
 
     # Calcul des scores pour chaque startup
@@ -486,58 +540,72 @@ else:
     # Afficher le profil utilisateur
     show_user_profile()
 
-    # Onglets principaux
-    tab1, tab2 = st.tabs(["💬 Chat", "📊 Résultats"])
+    # Menu d'administration des startups
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("Administration")
 
-    with tab1:
-        # Affichage de l'historique des messages
-        for message in st.session_state.messages:
-            if message["role"] == "user":
-                st.markdown(f"""
-                <div class="chat-message user-message">
-                    <div>{message["content"]}</div>
-                    <div style="font-size: 0.8rem; margin-top: 0.5rem;">Vous</div>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div class="chat-message assistant-message">
-                    <div>{message["content"]}</div>
-                    <div style="font-size: 0.8rem; margin-top: 0.5rem;">Assistant</div>
-                </div>
-                """, unsafe_allow_html=True)
+        if st.button("📋 Gérer les startups"):
+            st.session_state.current_view = "admin_startups"
+            st.rerun()
 
-        # Zone de saisie du message
-        user_query = st.text_input("Décrivez votre besoin:", key="unique_chat_input")
+        # Onglets principaux
+        tab1, tab2 = st.tabs(["💬 Chat", "📊 Résultats"])
 
-        if st.button("Envoyer", key="send_button"):
-            if user_query:
-                # Ajout du message utilisateur à l'historique
-                st.session_state.messages.append({"role": "user", "content": user_query})
-
-                # Recherche des startups correspondantes
-                matched_startups = find_matching_startups(user_query, st.session_state.startups)
-                st.session_state.matched_startups = matched_startups
-
-                # Génération de la réponse
-                with st.spinner("Recherche en cours..."):
-                    response = generate_response(user_query, matched_startups)
-
-                # Ajout de la réponse à l'historique
-                st.session_state.messages.append({"role": "assistant", "content": response})
-
-                # Rechargement pour afficher les nouveaux messages
-                st.rerun()
-
-    with tab2:
-        st.subheader("Startups correspondant à vos besoins")
-
-        if not st.session_state.matched_startups:
-            st.info("Aucune startup trouvée. Utilisez le chat pour décrire votre besoin.")
+        # Gestion des vues
+        if st.session_state.get("current_view") == "admin_startups" and CRAWLER_AVAILABLE:
+            render_startup_admin()
         else:
-            # Affichage des startups trouvées
-            for startup in st.session_state.matched_startups:
-                display_startup_card(startup)
+            # Vue normale avec les onglets
+            with tab1:
+                # Affichage de l'historique des messages
+                for message in st.session_state.messages:
+                    if message["role"] == "user":
+                        st.markdown(f"""
+                        <div class="chat-message user-message">
+                            <div>{message["content"]}</div>
+                            <div style="font-size: 0.8rem; margin-top: 0.5rem;">Vous</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div class="chat-message assistant-message">
+                            <div>{message["content"]}</div>
+                            <div style="font-size: 0.8rem; margin-top: 0.5rem;">Assistant</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                # Zone de saisie du message
+                user_query = st.text_input("Décrivez votre besoin:", key="unique_chat_input")
+
+                if st.button("Envoyer", key="send_button"):
+                    if user_query:
+                        # Ajout du message utilisateur à l'historique
+                        st.session_state.messages.append({"role": "user", "content": user_query})
+
+                        # Recherche des startups correspondantes
+                        matched_startups = find_matching_startups(user_query, st.session_state.startups)
+                        st.session_state.matched_startups = matched_startups
+
+                        # Génération de la réponse
+                        with st.spinner("Recherche en cours..."):
+                            response = generate_response(user_query, matched_startups)
+
+                        # Ajout de la réponse à l'historique
+                        st.session_state.messages.append({"role": "assistant", "content": response})
+
+                        # Rechargement pour afficher les nouveaux messages
+                        st.rerun()
+
+            with tab2:
+                st.subheader("Startups correspondant à vos besoins")
+
+                if not st.session_state.matched_startups:
+                    st.info("Aucune startup trouvée. Utilisez le chat pour décrire votre besoin.")
+                else:
+                    # Affichage des startups trouvées
+                    for startup in st.session_state.matched_startups:
+                        display_startup_card(startup)
 
     # Pied de page
     st.markdown(f"""

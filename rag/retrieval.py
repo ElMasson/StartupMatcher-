@@ -3,6 +3,8 @@ Fonction de récupération des documents pertinents
 """
 import logging
 from typing import Dict, List, Any, Union
+import os
+import json
 from rag.document_processor import VectorIndex
 from rag.docling_handler import search_similar_documents
 from rag.utils import filter_documents_by_query, get_latest_vector_store, load_vector_store
@@ -56,6 +58,36 @@ def retrieve_documents(query: str, filters: Dict[str, Any] = None, top_k: int = 
     # Limitation du nombre de résultats
     return similar_docs[:top_k]
 
+def get_all_startups() -> List[Dict[str, Any]]:
+    """
+    Récupère toutes les startups disponibles, en priorité depuis le fichier manuel
+
+    Returns:
+        Liste des startups
+    """
+    # Essayer d'abord de charger depuis le fichier manuel
+    manual_file = "data/startups_manual.json"
+    if os.path.exists(manual_file):
+        try:
+            with open(manual_file, 'r', encoding='utf-8') as f:
+                startups = json.load(f)
+                if startups:
+                    logger.info(f"Utilisation de {len(startups)} startups depuis le fichier manuel")
+                    return startups
+        except Exception as e:
+            logger.error(f"Erreur lors du chargement des startups manuelles: {e}")
+
+    # Ensuite essayer avec les méthodes standards
+    try:
+        startups = get_startup_data()
+        if startups:
+            return startups
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des startups via get_startup_data: {e}")
+
+    # Retourner une liste vide en cas d'échec
+    return []
+
 def retrieve_startups_by_need(user_need: str, filters: Dict[str, Any] = None, top_k: int = 5) -> List[Dict[str, Any]]:
     """
     Récupère les startups pertinentes pour un besoin utilisateur
@@ -68,9 +100,8 @@ def retrieve_startups_by_need(user_need: str, filters: Dict[str, Any] = None, to
     Returns:
         Liste des startups pertinentes
     """
-    # Pour simplifier et éviter les problèmes avec docling/VectorIndex,
-    # on utilise ici une approche plus directe
-    all_startups = get_startup_data()
+    # Récupérer toutes les startups disponibles (priorité à celles de l'admin)
+    all_startups = get_all_startups()
 
     # Si aucun besoin n'est spécifié, retourner simplement les X premières startups
     if not user_need:
