@@ -1,0 +1,31 @@
+# Framework principal
+streamlit
+
+# Gestion de l'environnement
+python-dotenv
+
+# Crawling
+firecrawl
+
+# RAG et embeddings
+docling
+mistralai
+
+# Agents IA
+crewai
+langchain
+
+# Data manipulation
+pandas
+numpy
+
+# Visualisation
+plotly
+
+# Utilitaires
+requests
+tqdm
+
+# Authentification
+pyjwt
+passlib
